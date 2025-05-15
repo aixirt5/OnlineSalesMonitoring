@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import React from 'react';
 import { getSalesDb } from '@/lib/salesDb';
 import { Order, OrderDetail, OrderComposition, OrderTaxDetail, OrderPayment } from '@/types/sales';
@@ -57,7 +57,6 @@ export default function SalesReport() {
     totalCount: 0,
     itemsPerPage: 10
   });
-  const [loadingDetails, setLoadingDetails] = useState<{ [key: string]: boolean }>({});
 
   // Fetch unique branches and terminals from orders
   useEffect(() => {
@@ -160,7 +159,7 @@ export default function SalesReport() {
   };
 
   // Fetch transactions with pagination
-  const fetchTransactions = async () => {
+  const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -428,11 +427,12 @@ export default function SalesReport() {
       } finally {
         setLoading(false);
       }
-    };
+    }, [dateRange, selectedBranch, selectedTerminal, pagination.currentPage, pagination.itemsPerPage]);
 
+  // Fetch transactions when filters change
   useEffect(() => {
     fetchTransactions();
-  }, [dateRange, selectedBranch, selectedTerminal, pagination.currentPage, pagination.itemsPerPage]);
+  }, [fetchTransactions]);
 
   const handlePageChange = (newPage: number) => {
     setPagination(prev => ({

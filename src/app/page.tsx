@@ -1,4 +1,3 @@
-import { redirect } from 'next/navigation';
 import LoginForm from '@/components/LoginForm';
 
 export default function Home() {

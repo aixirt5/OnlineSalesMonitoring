@@ -1,12 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { getSalesDb } from '@/lib/salesDb';
-import { Order, OrderDetail, OrderPayment } from '@/types/sales';
 
 export default function Dashboard() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({

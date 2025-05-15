@@ -3,7 +3,7 @@
 import { useState } from 'react';
 
 export default function BirESalesReport() {
-  const [loading, setLoading] = useState(true);
+  const [loading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState(() => {
     const today = new Date().toISOString().split('T')[0];

@@ -4,14 +4,6 @@ import React from 'react';
 import { useEffect, useState } from 'react';
 import { getSalesDb } from '@/lib/salesDb';
 
-interface Composition {
-  product_name: string;
-  product_code: string;
-  quantity: number;
-  amount: number;
-  is_addon: boolean;
-}
-
 interface MenuPerformance {
   menu_name: string;
   menu_id: number;
