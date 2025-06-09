@@ -3,8 +3,7 @@
 import { useState } from 'react';
 
 export default function BirESalesReport() {
-  const [loading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading] = useState(true);
   const [dateRange, setDateRange] = useState(() => {
     const today = new Date().toISOString().split('T')[0];
     return {
@@ -67,13 +66,6 @@ export default function BirESalesReport() {
           <div className="text-center p-6">
             <div className="text-sky-600 text-lg font-semibold mb-2">Loading...</div>
             <p className="text-sky-500 text-sm">Please wait while we prepare your report.</p>
-          </div>
-        </div>
-      ) : error ? (
-        <div className="flex items-center justify-center h-64 bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg border border-red-100">
-          <div className="text-center p-6">
-            <div className="text-red-600 text-lg font-semibold mb-2">{error}</div>
-            <p className="text-red-500 text-sm">Please try refreshing the page or contact support if the issue persists.</p>
           </div>
         </div>
       ) : (

@@ -14,7 +14,6 @@ interface Product {
   quantity: number;
   item1: string;
   status: string;
-  updated_by: string;
   branchcode: string;
   created_at: string;
   updated_at: string;
@@ -47,15 +46,14 @@ export default function ProductMasterfile() {
   const fetchProducts = async () => {
     try {
       const salesDb = getSalesDb();
-      const { data, error } = await salesDb
+      const { data, error: fetchError } = await salesDb
         .from('itemlist')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
       setProducts(data || []);
     } catch (err) {
-      console.error(err);
       setError('Failed to fetch products');
     } finally {
       setLoading(false);
@@ -67,18 +65,16 @@ export default function ProductMasterfile() {
     try {
       const salesDb = getSalesDb();
       if (selectedProduct) {
-        // Update existing product
-        const { error } = await salesDb
+        const { error: updateError } = await salesDb
           .from('itemlist')
           .update(formData)
           .eq('id', selectedProduct.id);
-        if (error) throw error;
+        if (updateError) throw updateError;
       } else {
-        // Create new product
-        const { error } = await salesDb
+        const { error: insertError } = await salesDb
           .from('itemlist')
           .insert([formData]);
-        if (error) throw error;
+        if (insertError) throw insertError;
       }
       setIsModalOpen(false);
       setSelectedProduct(null);
@@ -96,31 +92,7 @@ export default function ProductMasterfile() {
       });
       fetchProducts();
     } catch (err) {
-      console.error(err);
       setError('Failed to save product');
-    }
-  };
-
-  const handleEdit = (product: Product) => {
-    setSelectedProduct(product);
-    setFormData(product);
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = async (id: number) => {
-    if (window.confirm('Are you sure you want to delete this product?')) {
-      try {
-        const salesDb = getSalesDb();
-        const { error } = await salesDb
-          .from('itemlist')
-          .delete()
-          .eq('id', id);
-        if (error) throw error;
-        fetchProducts();
-      } catch (err) {
-        console.error(err);
-        setError('Failed to delete product');
-      }
     }
   };
 
@@ -135,8 +107,9 @@ export default function ProductMasterfile() {
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold text-sky-700">Product Masterfile</h1>
-            <button
+            <h1 className="text-2xl font-bold text-sky-700">Product Masterfile (Upcoming Feature)</h1>
+           {/* ADD NEW PRODUCT BUTTON */}
+            {/* <button
               onClick={() => {
                 setSelectedProduct(null);
                 setFormData({
@@ -156,7 +129,7 @@ export default function ProductMasterfile() {
               className="bg-sky-600 text-white px-4 py-2 rounded-lg hover:bg-sky-700 transition-colors"
             >
               Add New Product
-            </button>
+            </button> */}
           </div>
 
           <div className="mb-4">
@@ -186,7 +159,7 @@ export default function ProductMasterfile() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-sky-500 uppercase tracking-wider">Category</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-sky-500 uppercase tracking-wider">SRP</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-sky-500 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-sky-500 uppercase tracking-wider">Actions</th>
+                      {/* <th className="px-6 py-3 text-left text-xs font-medium text-sky-500 uppercase tracking-wider">Actions</th> */}
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-sky-200">
@@ -208,7 +181,7 @@ export default function ProductMasterfile() {
                             {product.status}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-sky-900">
+                        {/* <td className="px-6 py-4 whitespace-nowrap text-sm text-sky-900">
                           <button
                             onClick={() => handleEdit(product)}
                             className="text-sky-600 hover:text-sky-900 mr-3"
@@ -221,7 +194,7 @@ export default function ProductMasterfile() {
                           >
                             Delete
                           </button>
-                        </td>
+                        </td> */}
                       </tr>
                     ))}
                   </tbody>

@@ -1,6 +1,6 @@
-import { DashboardContent } from '@/components/DashboardContent';
-import { SidebarProvider } from '@/context/SidebarContext';
-export { metadata } from './metadata';
+import { DashboardContent } from "@/components/DashboardContent";
+import { SidebarProvider } from "@/context/SidebarContext";
+export { metadata } from "./metadata";
 
 export default function DashboardLayout({
   children,
@@ -12,4 +12,4 @@ export default function DashboardLayout({
       <DashboardContent>{children}</DashboardContent>
     </SidebarProvider>
   );
-} 
+}

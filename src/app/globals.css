@@ -2,7 +2,10 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f172a;  /* Darker text color for better contrast */
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
 }
 
 @theme inline {
@@ -15,12 +18,84 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
-    --foreground: #ededed;
+    --foreground: #f8fafc;  /* Lighter text color for dark mode */
+    --text-primary: #f8fafc;
+    --text-secondary: #e2e8f0;
+    --text-muted: #94a3b8;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* Mobile-first text color overrides */
+@media (max-width: 640px) {
+  .text-sky-500, 
+  .text-sky-600, 
+  .text-sky-700,
+  .text-sky-800,
+  .text-cyan-500,
+  .text-cyan-600,
+  .text-cyan-700,
+  .text-indigo-500,
+  .text-indigo-600,
+  .text-indigo-700 {
+    color: #000000 !important;
+  }
+
+  th, td, p, h1, h2, h3, h4, h5, h6, span, label {
+    color: #000000 !important;
+  }
+
+  input, select, textarea {
+    color: #000000 !important;
+  }
+
+  input::placeholder, select::placeholder, textarea::placeholder {
+    color: #666666 !important;
+  }
+
+  /* Preserve colors for specific UI elements */
+  .bg-red-100 *, .bg-green-100 *, .bg-amber-100 * {
+    color: inherit !important;
+  }
+
+  /* Preserve button text colors */
+  button:not([class*="text-"]) {
+    color: inherit !important;
+  }
+}
+
+/* Improved text contrast classes */
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* Improved form input text contrast */
+input, select, textarea {
+  color: var(--text-primary);
+}
+
+input::placeholder, select::placeholder, textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Improved table text contrast */
+th {
+  color: var(--text-secondary);
+}
+
+td {
+  color: var(--text-primary);
 }

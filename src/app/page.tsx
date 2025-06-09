@@ -2,13 +2,13 @@ import LoginForm from '@/components/LoginForm';
 
 export default function Home() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-100 via-sky-200 to-sky-300">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl border border-sky-100">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-sky-800 tracking-tight">
+    <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-100 to-sky-200">
+      <div className="w-[480px] p-8 bg-white rounded-[32px] shadow-lg">
+        <div className="text-center mb-6">
+          <h1 className="text-[28px] font-bold text-[#005B96]">
             Sales Monitoring System
-          </h2>
-          <p className="mt-2 text-center text-sm text-sky-600">
+          </h1>
+          <p className="mt-2 text-sky-500">
             Please sign in to your account
           </p>
         </div>
