@@ -29,7 +29,7 @@ export default function LoginForm() {
       console.log("Attempting login for username:", username);
 
       // First, get the project credentials for this user
-      const { data: projectData, error: projectError } = await supabase
+      const { data: projectData } = await supabase
         .from("myusers")
         .select("id, project_url, project_key, contact_email, active, Full_Name, password")
         .eq("username", username)
@@ -114,11 +114,9 @@ export default function LoginForm() {
         console.log("OTP sent successfully");
         setShowOTP(true);
       }
-    } catch (err) {
-      console.error("Login error:", err);
-      setError(
-        err instanceof Error ? err.message : "An unexpected error occurred"
-      );
+    } catch (error) {
+      console.error('Login error:', error);
+      setError('An error occurred during login');
     } finally {
       setLoading(false);
     }
@@ -149,13 +147,13 @@ export default function LoginForm() {
       }
 
       // Get project credentials
-      const { data: projectData, error: projectError } = await supabase
+      const { data: projectData } = await supabase
         .from("myusers")
         .select("project_url, project_key")
         .eq("id", userId)
         .single();
 
-      if (projectError || !projectData) {
+      if (!projectData) {
         throw new Error("Failed to get project credentials");
       }
 
@@ -165,7 +163,8 @@ export default function LoginForm() {
       localStorage.setItem("userId", userId.toString());
 
       router.push("/dashboard");
-    } catch (err) {
+    } catch (error) {
+      console.error('OTP verification error:', error);
       throw new Error("Invalid OTP, Please check your email.");
     }
   };

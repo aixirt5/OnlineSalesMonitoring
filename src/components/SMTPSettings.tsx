@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface SMTPSettings {
@@ -16,45 +16,55 @@ interface Props {
   onSettingsSaved?: () => void;
 }
 
+const defaultSettings: SMTPSettings = {
+  smtp_host: '',
+  smtp_port: 587,
+  smtp_user: '',
+  smtp_pass: '',
+  smtp_from: ''
+};
+
 export default function SMTPSettings({ userId, onSettingsSaved }: Props) {
-  const [settings, setSettings] = useState<SMTPSettings>({
-    smtp_host: '',
-    smtp_port: 587,
-    smtp_user: '',
-    smtp_pass: '',
-    smtp_from: ''
-  });
+  const [settings, setSettings] = useState<SMTPSettings>(defaultSettings);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
+      setLoading(true);
+      setError(null);
       const { data, error } = await supabase
-        .from('myusers')
-        .select('smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from')
-        .eq('id', userId)
+        .from('smtp_settings')
+        .select('*')
         .single();
 
       if (error) throw error;
       if (data) {
-        setSettings(data);
+        setSettings({
+          smtp_host: data.smtp_host || '',
+          smtp_port: data.smtp_port || 587,
+          smtp_user: data.smtp_user || '',
+          smtp_pass: data.smtp_pass || '',
+          smtp_from: data.smtp_from || ''
+        });
       }
     } catch (err) {
       console.error('Error loading SMTP settings:', err);
       setError('Failed to load SMTP settings');
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setMessage('');
-    setError('');
+    setError(null);
 
     try {
       const { error } = await supabase
@@ -69,13 +79,14 @@ export default function SMTPSettings({ userId, onSettingsSaved }: Props) {
         .eq('id', userId);
 
       if (error) throw error;
-      setMessage('SMTP settings saved successfully');
-      onSettingsSaved?.();
+
+      setMessage('Settings saved successfully');
+      if (onSettingsSaved) {
+        onSettingsSaved();
+      }
     } catch (err) {
-      console.error('Error saving SMTP settings:', err);
-      setError('Failed to save SMTP settings');
-    } finally {
-      setLoading(false);
+      console.error('Error saving settings:', err);
+      setError('Failed to save settings');
     }
   };
 

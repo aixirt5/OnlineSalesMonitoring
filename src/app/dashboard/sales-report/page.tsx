@@ -22,51 +22,32 @@ interface PaginationInfo {
   itemsPerPage: number;
 }
 
-interface OrderData {
+type OrderDiscount = {
   id: number;
   order_id: string;
-  net_total: number;
-  branch_code: string;
-  terminal_no: string;
-  trn: string;
-  datetime: string;
-  log_date: string;
-  cashier_name: string;
-  service_charge: number;
-  amount_discount: number;
-}
-
-interface OrderDiscount {
-  order_id: string;
-  subtotal_discount: number;
   discount_name: string;
-}
-
-interface CompositionData {
-  id: number;
-  order_detail_id: string;
-  compo_id: string;
-  product_name: string;
-  product_code: string;
-  quantity: number;
-  amount: number;
-  is_addon: boolean;
-  voided: boolean;
-  terminal_code: string;
+  subtotal_discount: number;
+  terminal_no: string;
+  log_date: string;
+  datetime: string;
+  reference: string;
   branch_code: string;
   created_at: string;
-}
+  updated_at: string;
+};
 
-interface ProcessedOrder extends OrderData {
-  details: any[];
-  tax_detail: any;
-  payments: any[];
-  discounts: OrderDiscount[];
+type ProcessedOrder = Order & {
+  id: number;
+  details?: (OrderDetail & {
+    id: number;
+    compositions?: (OrderComposition & { id: number })[];
+  })[];
+  tax_detail?: OrderTaxDetail;
+  payments?: OrderPayment[];
+  discounts?: OrderDiscount[];
   total_discount: number;
   final_net_total: number;
-  is_cancelled: boolean;
-  is_suspended: boolean;
-}
+};
 
 export default function SalesReport() {
   const [loading, setLoading] = useState(true);
@@ -182,122 +163,58 @@ export default function SalesReport() {
       const { data: orders, count } = await query;
 
       if (!orders || orders.length === 0) {
+        setSummaryStats({
+          totalSales: 0,
+          totalTransactions: 0,
+          averageTicket: 0,
+        });
         return;
       }
 
-      const typedOrders = orders as OrderData[];
-
-      // Fetch tax details for the orders
-      const { data: taxDetails, error: taxError } = await salesDb
-        .from('order_tax_details')
-        .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
-
-      if (taxError) {
-        throw new Error(`Failed to fetch tax details: ${taxError.message}`);
-      }
-
-      // Fetch payment details for the orders
-      const { data: payments, error: paymentsError } = await salesDb
-        .from('order_payments')
-        .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
-
-      if (paymentsError) {
-        throw new Error(`Failed to fetch payments: ${paymentsError.message}`);
-      }
-
-      // Fetch order details for the orders
-      const { data: orderDetails, error: detailsError } = await salesDb
-        .from('order_details')
-        .select(`
-          id,
-          order_detail_id,
-          order_id,
-          log_date,
-          datetime,
-          terminal_no,
-          unit_price,
-          total_amount,
-          discount_amount,
-          service_charge,
-          addon_amount,
-          amount_refund,
-          qty_refund,
-          category_id,
-          category_name,
-          menu_name,
-          menu_id,
-          item_qty,
-          discount_name,
-          mandated_discount,
-          voided,
-          refunded,
-          branch_code,
-          created_at
-        `)
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
-
-      if (detailsError) {
-        throw new Error(`Failed to fetch order details: ${detailsError.message}`);
-      }
-
-      // Fetch compositions for the order details
-      const { data: compositions, error: compositionsError } = await salesDb
-        .from('order_compositions')
-        .select(`
-          id,
-          order_detail_id,
-          compo_id,
-          product_name,
-          product_code,
-          quantity,
-          amount,
-          is_addon,
-          voided,
-          terminal_code,
-          branch_code,
-          created_at
-        `)
-        .in('order_detail_id', (orderDetails || []).map(d => d.order_detail_id));
-
-      if (compositionsError) {
-        throw new Error(`Failed to fetch compositions: ${compositionsError.message}`);
-      }
-
-      // Fetch discounts for these orders
-      const { data: discounts, error: discountsError } = await salesDb
-        .from('orders_discounts')
-        .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id.toString()));
-
-      if (discountsError) {
-        throw new Error(`Failed to fetch discounts: ${discountsError.message}`);
-      }
-
-      // Initialize discountsByOrder map
+      // Initialize discounts map
       const discountsByOrder = new Map<string, OrderDiscount[]>();
-      (discounts || []).forEach((discount: OrderDiscount) => {
-        const orderId = discount.order_id;
-        if (!discountsByOrder.has(orderId)) {
-          discountsByOrder.set(orderId, []);
-        }
-        discountsByOrder.get(orderId)!.push(discount);
-      });
 
-      const totalSales = orders?.reduce((sum, order) => {
+      // Only fetch discounts if we have orders
+      if (orders.length > 0) {
+        try {
+          // Split orders into chunks to avoid query size limits
+          const chunkSize = 100;
+          const orderIdChunks = [];
+          for (let i = 0; i < orders.length; i += chunkSize) {
+            orderIdChunks.push(orders.slice(i, i + chunkSize).map(o => o.order_id.toString()));
+          }
+
+          // Fetch discounts for each chunk
+          for (const chunk of orderIdChunks) {
+            const { data: chunkDiscounts } = await salesDb
+              .from('orders_discounts')
+              .select('*')
+              .in('order_id', chunk);
+
+            // Add chunk discounts to the map
+            (chunkDiscounts || []).forEach(discount => {
+              if (discount?.order_id) {
+                if (!discountsByOrder.has(discount.order_id)) {
+                  discountsByOrder.set(discount.order_id, []);
+                }
+                discountsByOrder.get(discount.order_id)!.push(discount);
+              }
+            });
+          }
+        } catch (err) {
+          // Log error but continue with any discounts we managed to fetch
+          console.warn('Issue fetching some discounts:', err);
+        }
+      }
+
+      // Calculate totals using whatever discounts we have
+      const totalSales = orders.reduce((sum, order) => {
         const netTotal = order.net_total || 0;
         const orderDiscount = discountsByOrder.get(order.order_id.toString()) || [];
         const totalDiscount = orderDiscount.reduce((discountSum: number, discount: OrderDiscount) => 
           discountSum + (discount.subtotal_discount || 0), 0);
         return sum + (netTotal - totalDiscount);
-      }, 0) || 0;
+      }, 0);
 
       const totalTransactions = count || 0;
       const averageTicket = totalTransactions > 0 ? totalSales / totalTransactions : 0;
@@ -314,8 +231,6 @@ export default function SalesReport() {
 
   // Fetch transactions with pagination
   const fetchTransactions = useCallback(async () => {
-    let discountsByOrder: Map<string, OrderDiscount[]>;
-
     try {
       setLoading(true);
       setError(null);
@@ -404,17 +319,38 @@ export default function SalesReport() {
         return;
       }
 
-      const typedOrders = orders as OrderData[];
+      // Fetch discounts for these orders
+      const { data: discounts, error: discountsError } = await salesDb
+        .from('orders_discounts')
+        .select('*')
+        .in('order_id', orders.map(o => o.order_id));
+
+      if (discountsError) {
+        console.error('Error fetching discounts:', discountsError);
+        // Don't throw error, just log it and continue with empty discounts
+        console.warn('Continuing with empty discounts due to fetch error');
+      }
+
+      // Create a map of order_id to discounts
+      const discountsByOrder = new Map<string, OrderDiscount[]>();
+      (discounts || []).forEach(discount => {
+        const orderId = discount.order_id;
+        if (!discountsByOrder.has(orderId)) {
+          discountsByOrder.set(orderId, []);
+        }
+        discountsByOrder.get(orderId)!.push(discount);
+      });
 
       // Fetch tax details for the orders
       const { data: taxDetails, error: taxError } = await salesDb
         .from('order_tax_details')
         .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
+        .in('order_id', orders.map(o => o.order_id))
+        .in('branch_code', orders.map(o => o.branch_code))
+        .in('terminal_no', orders.map(o => o.terminal_no));
 
       if (taxError) {
+        console.error('Error fetching tax details:', taxError);
         throw new Error(`Failed to fetch tax details: ${taxError.message}`);
       }
 
@@ -422,11 +358,12 @@ export default function SalesReport() {
       const { data: payments, error: paymentsError } = await salesDb
         .from('order_payments')
         .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
+        .in('order_id', orders.map(o => o.order_id))
+        .in('branch_code', orders.map(o => o.branch_code))
+        .in('terminal_no', orders.map(o => o.terminal_no));
 
       if (paymentsError) {
+        console.error('Error fetching payments:', paymentsError);
         throw new Error(`Failed to fetch payments: ${paymentsError.message}`);
       }
 
@@ -459,11 +396,12 @@ export default function SalesReport() {
           branch_code,
           created_at
         `)
-        .in('order_id', typedOrders.map(o => o.order_id))
-        .in('branch_code', typedOrders.map(o => o.branch_code))
-        .in('terminal_no', typedOrders.map(o => o.terminal_no));
+        .in('order_id', orders.map(o => o.order_id))
+        .in('branch_code', orders.map(o => o.branch_code))
+        .in('terminal_no', orders.map(o => o.terminal_no));
 
       if (detailsError) {
+        console.error('Error fetching order details:', detailsError);
         throw new Error(`Failed to fetch order details: ${detailsError.message}`);
       }
 
@@ -487,77 +425,80 @@ export default function SalesReport() {
         .in('order_detail_id', (orderDetails || []).map(d => d.order_detail_id));
 
       if (compositionsError) {
+        console.error('Error fetching compositions:', compositionsError);
         throw new Error(`Failed to fetch compositions: ${compositionsError.message}`);
       }
 
-      // Fetch discounts for these orders
-      const { data: discounts, error: discountsError } = await salesDb
-        .from('orders_discounts')
-        .select('*')
-        .in('order_id', typedOrders.map(o => o.order_id.toString()));
+      // Process and combine the data
+      const processedOrders = orders.map(order => {
+        try {
+          // Get tax details for this order
+          const orderTaxDetails = (taxDetails || []).filter(tax => 
+            tax.order_id === order.order_id && 
+            tax.branch_code === order.branch_code && 
+            tax.terminal_no === order.terminal_no
+          );
 
-      if (discountsError) {
-        throw new Error(`Failed to fetch discounts: ${discountsError.message}`);
-      }
+          // Get payment details for this order
+          const orderPayments = (payments || []).filter(payment => 
+            payment.order_id === order.order_id && 
+            payment.branch_code === order.branch_code && 
+            payment.terminal_no === order.terminal_no
+          );
 
-      // Initialize discountsByOrder map
-      discountsByOrder = new Map<string, OrderDiscount[]>();
-      (discounts || []).forEach((discount: OrderDiscount) => {
-        const orderId = discount.order_id;
-        if (!discountsByOrder.has(orderId)) {
-          discountsByOrder.set(orderId, []);
+          // Get order details for this order
+          const details = (orderDetails || [])
+            .filter(detail => 
+              detail.order_id === order.order_id && 
+              detail.branch_code === order.branch_code && 
+              detail.terminal_no === order.terminal_no
+            )
+            .map(detail => ({
+              ...detail,
+              id: detail.id,
+              compositions: (compositions || [])
+                .filter(comp => comp.order_detail_id === detail.order_detail_id)
+                .map(comp => ({
+                  ...comp,
+                  id: comp.id
+                }))
+            }));
+
+          // Get discounts for this order
+          const orderDiscounts = discountsByOrder.get(order.order_id.toString()) || [];
+          const totalDiscount = orderDiscounts.reduce((sum: number, discount: OrderDiscount) => 
+            sum + (discount.subtotal_discount || 0), 0);
+
+          // Calculate final net total after all discounts
+          const finalNetTotal = (order.net_total || 0) - totalDiscount;
+
+          return {
+            ...order,
+            id: order.id,
+            details,
+            tax_detail: orderTaxDetails[0],
+            payments: orderPayments,
+            discounts: orderDiscounts,
+            total_discount: totalDiscount,
+            final_net_total: finalNetTotal,
+            is_cancelled: false,
+            is_suspended: false
+          } as ProcessedOrder;
+        } catch (err) {
+          console.error(`Error processing order ${order.order_id}:`, err);
+          return {
+            ...order,
+            id: order.id,
+            details: [],
+            tax_detail: undefined,
+            payments: [],
+            discounts: [],
+            total_discount: 0,
+            final_net_total: order.net_total || 0,
+            is_cancelled: false,
+            is_suspended: false
+          } as ProcessedOrder;
         }
-        discountsByOrder.get(orderId)!.push(discount);
-      });
-
-      const processedOrders = typedOrders.map(order => {
-        const orderTaxDetails = (taxDetails || []).filter(tax => 
-          tax.order_id === order.order_id && 
-          tax.branch_code === order.branch_code && 
-          tax.terminal_no === order.terminal_no
-        );
-
-        const orderPayments = (payments || []).filter(payment => 
-          payment.order_id === order.order_id && 
-          payment.branch_code === order.branch_code && 
-          payment.terminal_no === order.terminal_no
-        );
-
-        const details = (orderDetails || [])
-          .filter(detail => 
-            detail.order_id === order.order_id && 
-            detail.branch_code === order.branch_code && 
-            detail.terminal_no === order.terminal_no
-          )
-          .map(detail => ({
-            ...detail,
-            id: detail.id,
-            compositions: (compositions || [])
-              .filter(comp => comp.order_detail_id === detail.order_detail_id)
-              .map(comp => ({
-                ...comp,
-                id: comp.id
-              }))
-          }));
-
-        const orderDiscounts = discountsByOrder.get(order.order_id.toString()) || [];
-        const totalDiscount = orderDiscounts.reduce((sum: number, discount: OrderDiscount) => 
-          sum + (discount.subtotal_discount || 0), 0);
-
-        const finalNetTotal = (order.net_total || 0) - totalDiscount;
-
-        return {
-          ...order,
-          id: order.id,
-          details,
-          tax_detail: orderTaxDetails[0],
-          payments: orderPayments,
-          discounts: orderDiscounts,
-          total_discount: totalDiscount,
-          final_net_total: finalNetTotal,
-          is_cancelled: false,
-          is_suspended: false
-        } as ProcessedOrder;
       });
 
       setTransactions(processedOrders);
@@ -589,7 +530,7 @@ export default function SalesReport() {
     }));
   };
 
-  const toggleTransaction = (order: OrderData & { id: number }) => {
+  const toggleTransaction = (order: Order & { id: number }) => {
     if (expandedTransaction === order.id) {
       setExpandedTransaction(null);
     } else {
@@ -895,22 +836,35 @@ export default function SalesReport() {
                               </tr>
                               
                               {/* Menu compositions */}
-                              {(detail.compositions?.filter((composition: CompositionData) =>
+                              {(detail.compositions?.filter(composition =>
                                 (detail.compositions && detail.compositions.length > 1) || composition.product_name !== detail.menu_name
-                              ) || []).map((composition: CompositionData, cIndex: number) => (
+                              ) || []).map((composition, cIndex) => (
                                 <tr 
-                                  key={`${detail.id}-${cIndex}`}
+                                  key={composition.id ?? `${composition.compo_id}-${cIndex}`}
                                   className={`${detail.voided ? 'bg-red-50/50' : 'bg-sky-50/50'} text-xs sm:text-sm`}
                                 >
-                                  <td colSpan={2} className="px-2 sm:px-3 py-2 sm:py-3 text-sm text-sky-500 font-medium pl-8">
-                                    {composition.product_name}
+                                  <td className="px-2 sm:px-3 py-1 sm:py-2 pl-8 whitespace-nowrap text-sky-700">
+                                    <div className="flex items-center space-x-2">
+                                      <svg className="h-3 w-3 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                      </svg>
+                                      <span>{composition.product_name}</span>
+                                      {composition.is_addon && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                          Add-on
+                                        </span>
+                                      )}
+                                      {composition.voided && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                                          Voided
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
-                                  <td className="px-2 sm:px-3 py-2 sm:py-3 text-sm text-sky-900 text-center">
-                                    {composition.quantity}
-                                  </td>
-                                  <td className="px-2 sm:px-3 py-2 sm:py-3 text-sm text-sky-900 text-right">
-                                    {formatCurrency(composition.amount)}
-                                  </td>
+                                  <td className="px-2 sm:px-3 py-1 sm:py-2 whitespace-nowrap text-sky-700 text-right">{composition.quantity}</td>
+                                  {/* MENU COMPOSITIONS ADD ONS PRICE AND TOTAL PRICE*/}
+                                  {/* <td className="px-2 sm:px-3 py-1 sm:py-2 whitespace-nowrap text-sky-700 text-right">{formatCurrency(composition.amount)}</td> */}
+                                  {/* <td className="px-2 sm:px-3 py-1 sm:py-2 whitespace-nowrap text-sky-700 text-right">{formatCurrency(composition.amount * composition.quantity)}</td> */}
                                 </tr>
                               ))}
 

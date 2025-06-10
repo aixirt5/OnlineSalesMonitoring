@@ -27,18 +27,21 @@ function formatPhoneNumber(phoneNumber: string): {
 
 // Function to get SMS gateway email based on prefix
 function getSMSGateway(prefix: string, phoneNumber: string): string | null {
-  const carrierPrefixes = {
-    globe: ['905', '906', '915', '916', '917', '926', '927', '935', '936', '937', '945', '955', '965', '975', '995'],
-    smart: ['907', '908', '909', '910', '912', '918', '919', '920', '921', '928', '929', '930', '938', '939', '946', '947', '949', '951', '961', '998', '999'],
-    sun: ['922', '923', '924', '925', '931', '932', '933', '934', '940', '941', '942', '943', '973', '974']
-  };
+  // Globe/TM Prefixes: 905, 906, 915, 916, 917, 926, 927, 935, 936, 937, 945, 955, 965, 975, 995
+  const globePrefixes = ['905', '906', '915', '916', '917', '926', '927', '935', '936', '937', '945', '955', '965', '975', '995'];
+  
+  // Smart/TNT Prefixes: 907, 908, 909, 910, 912, 918, 919, 920, 921, 928, 929, 930, 938, 939, 946, 947, 949, 951, 961, 998, 999
+  const smartPrefixes = ['907', '908', '909', '910', '912', '918', '919', '920', '921', '928', '929', '930', '938', '939', '946', '947', '949', '951', '961', '998', '999'];
+  
+  // Sun Prefixes: 922, 923, 924, 925, 931, 932, 933, 934, 940, 941, 942, 943, 973, 974
+  const sunPrefixes = ['922', '923', '924', '925', '931', '932', '933', '934', '940', '941', '942', '943', '973', '974'];
 
-  if (carrierPrefixes.globe.includes(prefix)) {
-    return `${phoneNumber}@sms.globe.com.ph`;
-  } else if (carrierPrefixes.smart.includes(prefix)) {
-    return `${phoneNumber}@sms.smart.com.ph`;
-  } else if (carrierPrefixes.sun.includes(prefix)) {
-    return `${phoneNumber}@sms.sun.com.ph`;
+  if (globePrefixes.includes(prefix)) {
+    return `${phoneNumber}@sms.globe.com.ph`; // Globe/TM
+  } else if (smartPrefixes.includes(prefix)) {
+    return `${phoneNumber}@sms.smart.com.ph`; // Smart/TNT
+  } else if (sunPrefixes.includes(prefix)) {
+    return `${phoneNumber}@sms.sun.com.ph`; // Sun
   }
 
   return null;

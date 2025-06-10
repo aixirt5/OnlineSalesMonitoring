@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
-import { supabase } from '@/lib/supabase';
 import { logout } from '@/lib/auth';
 
 export default function Sidebar() {

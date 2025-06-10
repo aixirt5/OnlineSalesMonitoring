@@ -4,14 +4,6 @@ import React from 'react';
 import { useEffect, useState } from 'react';
 import { getSalesDb } from '@/lib/salesDb';
 
-interface Composition {
-  product_name: string;
-  product_code: string;
-  quantity: number;
-  amount: number;
-  is_addon: boolean;
-}
-
 interface MenuPerformance {
   menu_name: string;
   menu_id: number;
@@ -207,7 +199,7 @@ export default function MenuPerformanceReport() {
 
         // Convert map to array, remove temporary fields, and sort by total sales with service
         const sortedPerformance = Array.from(menuPerformanceMap.values())
-          .map(({ order_ids, order_detail_ids, ...item }) => item)
+          .map(({ ...item }) => item)
           .sort((a, b) => b.total_sales_with_service - a.total_sales_with_service);
 
         setMenuPerformance(sortedPerformance);

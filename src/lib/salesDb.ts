@@ -11,10 +11,12 @@ export const getSalesDb = () => {
     throw new Error("Sales database credentials not found");
   }
 
+  // Check if we already have a client with these credentials
   if (salesDbClient && currentProjectUrl === projectUrl) {
     return salesDbClient;
   }
 
+  // Create new client if none exists or credentials changed
   salesDbClient = createClient(projectUrl, projectKey, {
     auth: {
       storageKey: "sales-db-auth",

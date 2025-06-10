@@ -16,7 +16,7 @@ interface TerminalInfo {
 
 interface PMIXItem {
   menu_name: string;
-  menu_id: string;
+  menu_id: number;
   category_name: string;
   total_quantity: number;
   total_amount: number;
@@ -197,8 +197,8 @@ export default function PMIXReport() {
       }
 
       // Get unique menu IDs and their order_detail_ids
-      const menuItemsMap = orderDetails?.reduce((acc: Record<string, any>, detail) => {
-        const key = detail.menu_id;
+      const menuItemsMap = orderDetails.reduce((acc, detail) => {
+        const key = `${detail.menu_id}-${detail.menu_name}`;
         if (!acc[key]) {
           acc[key] = {
             menu_id: detail.menu_id,
@@ -207,18 +207,28 @@ export default function PMIXReport() {
             total_quantity: 0,
             total_amount: 0,
             unit_price: detail.unit_price,
-            service_charge: 0,
-            discount_amount: 0,
+            service_charge: detail.service_charge || 0,
+            discount_amount: detail.discount_amount || 0,
             order_detail_ids: []
           };
         }
         acc[key].total_quantity += detail.item_qty;
         acc[key].total_amount += detail.total_amount;
-        acc[key].service_charge += detail.service_charge;
-        acc[key].discount_amount += detail.discount_amount;
+        acc[key].service_charge += detail.service_charge || 0;
+        acc[key].discount_amount += detail.discount_amount || 0;
         acc[key].order_detail_ids.push(detail.order_detail_id);
         return acc;
-      }, {});
+      }, {} as Record<string, {
+        menu_id: number;
+        menu_name: string;
+        category_name: string;
+        total_quantity: number;
+        total_amount: number;
+        unit_price: number;
+        service_charge: number;
+        discount_amount: number;
+        order_detail_ids: number[];
+      }>);
 
       // Fetch compositions for all order details
       const allOrderDetailIds = orderDetails.map(d => d.order_detail_id);
@@ -240,11 +250,14 @@ export default function PMIXReport() {
       const pmixItems: PMIXItem[] = Object.values(menuItemsMap)
         .sort((a, b) => a.menu_name.localeCompare(b.menu_name))
         .map(menuItem => {
+          // Get all compositions for this menu item's order details
           const menuCompositions = compositions?.filter(c => 
             menuItem.order_detail_ids.includes(c.order_detail_id) &&
+            // Filter out compositions where product name matches menu name
             c.product_name.toLowerCase() !== menuItem.menu_name.toLowerCase()
           ) || [];
 
+          // Aggregate compositions
           const aggregatedCompositions = menuCompositions.reduce((acc, comp) => {
             const key = `${comp.product_code}-${comp.is_addon}`;
             if (!acc[key]) {
@@ -266,6 +279,7 @@ export default function PMIXReport() {
             amount: number;
           }>);
 
+          // Sort compositions by product name
           const sortedCompositions = Object.values(aggregatedCompositions).sort((a, b) => 
             a.product_name.localeCompare(b.product_name)
           );

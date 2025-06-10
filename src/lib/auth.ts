@@ -89,14 +89,17 @@ export async function addTrustedDevice(
 // Function to logout and clear verified devices
 export async function logout(userId: number): Promise<void> {
   try {
+    // Clear verified devices array
     await supabase
       .from("myusers")
       .update({ verified_devices: [] })
       .eq("id", userId);
 
+    // Clear local storage
     localStorage.removeItem("projectUrl");
     localStorage.removeItem("projectKey");
   } catch (error) {
+    console.error("Error during logout:", error);
     throw error;
   }
 }

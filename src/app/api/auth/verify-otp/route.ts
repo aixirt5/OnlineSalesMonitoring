@@ -3,94 +3,81 @@ import { supabase } from "@/lib/supabase";
 
 export async function POST(request: Request) {
   try {
-    const { userId, otp } = await request.json();
+    const req = await request.json();
+    const { userId, otp, deviceInfo } = req;
 
-    if (!userId || !otp) {
-      return new Response(
-        JSON.stringify({ error: 'User ID and OTP are required' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Get stored OTP
-    const { data: otpData, error: otpError } = await supabase
+    // Verify OTP
+    const { data: otpRecord, error: otpError } = await supabase
       .from("user_otps")
       .select("*")
       .eq("user_id", userId)
+      .eq("otp", otp)
       .single();
 
-    if (otpError) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to verify OTP' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+    if (otpError || !otpRecord) {
+      return NextResponse.json(
+        { error: "Invalid OTP number" },
+        { status: 400 }
       );
     }
 
-    if (!otpData) {
-      return new Response(
-        JSON.stringify({ error: 'No OTP found for this user' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+    // Check if OTP is expired
+    if (new Date(otpRecord.expires_at) < new Date()) {
+      return NextResponse.json(
+        { error: "OTP has expired" },
+        { status: 400 }
       );
     }
 
-    // Check if OTP has expired
-    const expiresAt = new Date(otpData.expires_at);
-    if (expiresAt < new Date()) {
-      return new Response(
-        JSON.stringify({ error: 'OTP has expired' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Get current verified devices
+    const { data: user } = await supabase
+      .from("myusers")
+      .select("verified_devices")
+      .eq("id", userId)
+      .single();
 
-    // Verify OTP
-    if (otpData.otp !== otp) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid OTP' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+    const verifiedDevices = (user?.verified_devices || []) as Array<{
+      userAgent: string;
+      ipAddress: string;
+    }>;
+
+    // Add new device if it doesn't exist
+    if (
+      !verifiedDevices.some(
+        (device) => device.userAgent === deviceInfo.userAgent
+      )
+    ) {
+      verifiedDevices.push({
+        userAgent: deviceInfo.userAgent,
+        ipAddress: "stored",
+      });
+
+      const { error: updateError } = await supabase
+        .from("myusers")
+        .update({ verified_devices: verifiedDevices })
+        .eq("id", userId);
+
+      if (updateError) {
+        return NextResponse.json(
+          { error: "Failed to verify device" },
+          { status: 500 }
+        );
+      }
     }
 
     // Delete used OTP
     await supabase
       .from("user_otps")
       .delete()
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .eq("otp", otp);
 
-    return new Response(
-      JSON.stringify({ message: 'OTP verified successfully' }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
+    return NextResponse.json({ success: true });
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: 'Failed to verify OTP' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    console.error('Error verifying OTP:', error);
+    return NextResponse.json(
+      { error: "Invalid OTP number" },
+      { status: 400 }
     );
-  }
-}
-
-// Helper function to store OTP in Supabase
-export async function storeOTP(userId: number, otp: string) {
-  try {
-    // Delete any existing OTP for this user
-    await supabase
-      .from("user_otps")
-      .delete()
-      .eq("user_id", userId);
-
-    // Calculate expiry time (5 minutes from now)
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    // Store new OTP
-    const { error: insertError } = await supabase.from("user_otps").insert({
-      user_id: userId,
-      otp: otp,
-      expires_at: expiresAt.toISOString(),
-    });
-
-    if (insertError) {
-      throw insertError;
-    }
-  } catch (error) {
-    throw error;
   }
 }

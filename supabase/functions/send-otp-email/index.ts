@@ -1,6 +1,12 @@
 // Follow this setup guide to integrate the Deno runtime and Supabase Functions in your project:
 // https://supabase.com/docs/guides/functions/quickstart
 
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+};
+
 // @ts-ignore: Deno imports
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 // @ts-ignore: Deno imports

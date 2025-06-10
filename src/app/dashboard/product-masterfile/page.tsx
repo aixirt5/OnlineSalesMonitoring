@@ -14,6 +14,7 @@ interface Product {
   quantity: number;
   item1: string;
   status: string;
+  updated_by: string;
   branchcode: string;
   created_at: string;
   updated_at: string;
@@ -46,14 +47,15 @@ export default function ProductMasterfile() {
   const fetchProducts = async () => {
     try {
       const salesDb = getSalesDb();
-      const { data, error: fetchError } = await salesDb
+      const { data, error } = await salesDb
         .from('itemlist')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (fetchError) throw fetchError;
+      if (error) throw error;
       setProducts(data || []);
     } catch (err) {
+      console.error(err);
       setError('Failed to fetch products');
     } finally {
       setLoading(false);
@@ -65,16 +67,18 @@ export default function ProductMasterfile() {
     try {
       const salesDb = getSalesDb();
       if (selectedProduct) {
-        const { error: updateError } = await salesDb
+        // Update existing product
+        const { error } = await salesDb
           .from('itemlist')
           .update(formData)
           .eq('id', selectedProduct.id);
-        if (updateError) throw updateError;
+        if (error) throw error;
       } else {
-        const { error: insertError } = await salesDb
+        // Create new product
+        const { error } = await salesDb
           .from('itemlist')
           .insert([formData]);
-        if (insertError) throw insertError;
+        if (error) throw error;
       }
       setIsModalOpen(false);
       setSelectedProduct(null);
@@ -92,6 +96,7 @@ export default function ProductMasterfile() {
       });
       fetchProducts();
     } catch (err) {
+      console.error(err);
       setError('Failed to save product');
     }
   };

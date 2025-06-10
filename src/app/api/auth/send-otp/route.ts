@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateOTP, sendOTP } from "@/lib/server/email";
-import { storeOTP } from "../verify-otp/route";
+import { storeOTP } from "@/utils/otp";
 import { supabase } from "@/lib/supabase";
 
 export async function POST(request: Request) {
