@@ -38,6 +38,11 @@ type PaymentMethod = {
   }[];
 };
 
+type BranchInfo = {
+  branch_code: string;
+  branch_name: string;
+};
+
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +51,8 @@ export default function Dashboard() {
     end: new Date().toISOString().split("T")[0],
   });
   const [topProductsSort, setTopProductsSort] = useState<'quantity' | 'sales'>('quantity');
+  const [branchList, setBranchList] = useState<BranchInfo[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>('all');
 
   // Sales metrics
   const [totalSales, setTotalSales] = useState(0);
@@ -57,19 +64,58 @@ export default function Dashboard() {
   const [salesByBranch, setSalesByBranch] = useState<BranchSales[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
 
+  // Fetch branch list
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        const salesDb = getSalesDb();
+        
+        // Fetch unique branches with names from orders table
+        const { data: branchData, error: branchError } = await salesDb
+          .from('orders')
+          .select('branch_code, branch_name')
+          .not('branch_code', 'is', null)
+          .not('branch_name', 'is', null);
+        
+        if (branchError) throw branchError;
+
+        // Remove duplicates and sort by branch name
+        const uniqueBranches = Array.from(
+          new Map(
+            (branchData || [])
+              .map(item => [item.branch_code, item])
+          ).values()
+        ).sort((a, b) => (a.branch_name || '').localeCompare(b.branch_name || ''));
+
+        setBranchList(uniqueBranches);
+      } catch (err) {
+        console.error('Failed to fetch branches:', err);
+      }
+    };
+
+    fetchBranches();
+  }, []);
+
   useEffect(() => {
     const fetchSalesData = async () => {
       try {
         const salesDb = getSalesDb();
 
         // Fetch orders within date range
-        const { data: orders, error: ordersError } = await salesDb
+        let query = salesDb
           .from("orders")
           .select("*")
           .gte("log_date", dateRange.start)
           .lte("log_date", dateRange.end)
           .not("is_cancelled", "eq", true)
           .not("is_suspended", "eq", true);
+
+        // Add branch filter if a specific branch is selected
+        if (selectedBranch !== 'all') {
+          query = query.eq('branch_code', selectedBranch);
+        }
+
+        const { data: orders, error: ordersError } = await query;
 
         if (ordersError) {
           console.error("Error fetching orders:", ordersError);
@@ -179,13 +225,20 @@ export default function Dashboard() {
         setSalesByBranch(processedBranchSales);
 
         // Fetch payment methods with discounts applied
-        const { data: payments } = await salesDb
+        let paymentQuery = salesDb
           .from("order_payments")
           .select(
-            "tender_type, tender_amount, change_amount, refund_amount, terminal_no"
+            "tender_type, tender_amount, change_amount, refund_amount, terminal_no, branch_code"
           )
           .gte("log_date", dateRange.start)
           .lte("log_date", dateRange.end);
+
+        // Add branch filter if a specific branch is selected
+        if (selectedBranch !== 'all') {
+          paymentQuery = paymentQuery.eq('branch_code', selectedBranch);
+        }
+
+        const { data: payments } = await paymentQuery;
 
         if (payments) {
           // First, aggregate by payment method and terminal
@@ -205,47 +258,54 @@ export default function Dashboard() {
               });
             }
 
-            const method = acc.get(key)!;
-            method.total_amount += netAmount;
+            const methodData = acc.get(key)!;
+            methodData.total_amount += netAmount;
 
             // Update terminal amount
-            const currentTerminalAmount = method.terminals.get(terminalNo) || 0;
-            method.terminals.set(terminalNo, currentTerminalAmount + netAmount);
+            const currentTerminalAmount = methodData.terminals.get(terminalNo) || 0;
+            methodData.terminals.set(terminalNo, currentTerminalAmount + netAmount);
 
             return acc;
           }, new Map<string, { tender_type: string; total_amount: number; terminals: Map<string, number> }>());
 
-          // Convert to final format with sorted terminals
-          const processedPaymentMethods = Array.from(
-            paymentsByMethodAndTerminal.values()
-          ).map((method) => ({
-            tender_type: method.tender_type,
-            total_amount: method.total_amount,
-            terminals: Array.from(method.terminals.entries())
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([terminal_no, amount]) => ({
-                terminal_no,
-                amount,
-              })),
-          }));
+          // Convert to array and format terminal data
+          const processedPaymentMethods = Array.from(paymentsByMethodAndTerminal.values())
+            .map((method) => ({
+              tender_type: method.tender_type,
+              total_amount: method.total_amount,
+              terminals: Array.from(method.terminals.entries())
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([terminal_no, amount]) => ({
+                  terminal_no,
+                  amount,
+                })),
+            }))
+            .sort((a, b) => b.total_amount - a.total_amount); // Sort by total amount descending
 
           setPaymentMethods(processedPaymentMethods);
         }
 
         // Fetch top products
-        const { data: topProductsData } = await salesDb
+        let topProductsQuery = salesDb
           .from("order_details")
           .select(`
             menu_name,
             menu_id,
             item_qty,
             qty_refund,
-            total_amount
+            total_amount,
+            branch_code
           `)
           .gte("log_date", dateRange.start)
           .lte("log_date", dateRange.end)
-          .eq("voided", false)
-          .order("item_qty", { ascending: false });
+          .eq("voided", false);
+
+        // Add branch filter if a specific branch is selected
+        if (selectedBranch !== 'all') {
+          topProductsQuery = topProductsQuery.eq('branch_code', selectedBranch);
+        }
+
+        const { data: topProductsData } = await topProductsQuery.order("item_qty", { ascending: false });
 
         if (topProductsData) {
           const aggregatedProducts = topProductsData.reduce((acc, curr) => {
@@ -290,7 +350,7 @@ export default function Dashboard() {
     };
 
     fetchSalesData();
-  }, [dateRange, topProductsSort]);
+  }, [dateRange, topProductsSort, selectedBranch]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -347,6 +407,60 @@ export default function Dashboard() {
                     }
                     className="w-full border border-sky-300 bg-white/70 rounded-lg px-2 sm:px-3 py-1.5 text-sm focus:ring-sky-400 focus:border-sky-400 shadow-sm transition-all duration-200 text-sky-900"
                   />
+                </div>
+                <div className="flex flex-col">
+                  <label className="text-xs text-sky-600 mb-1 font-semibold">
+                    Branch
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                      <svg 
+                        className="h-5 w-5 text-sky-500" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor"
+                      >
+                        <path 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          strokeWidth={2} 
+                          d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" 
+                        />
+                      </svg>
+                    </div>
+                    <select
+                      value={selectedBranch}
+                      onChange={(e) => setSelectedBranch(e.target.value)}
+                      className="w-full border border-sky-300 bg-white/70 rounded-lg pl-9 pr-8 py-1.5 text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 shadow-sm transition-all duration-200 text-sky-900 appearance-none hover:bg-sky-50/50"
+                    >
+                      <option value="all">All Branches</option>
+                      {branchList.map((branch) => (
+                        <option key={branch.branch_code} value={branch.branch_code}>
+                          {branch.branch_name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                      <svg 
+                        className="h-4 w-4 text-sky-500" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor"
+                      >
+                        <path 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          strokeWidth={2} 
+                          d="M19 9l-7 7-7-7" 
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                  {selectedBranch !== 'all' && (
+                    <p className="mt-1 text-xs text-sky-600">
+                      Showing data for selected branch only
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
