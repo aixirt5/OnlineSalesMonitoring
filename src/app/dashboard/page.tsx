@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getSalesDb } from "@/lib/salesDb";
 import React from "react";
+import { Notification } from "@/components/ui/Notification";
 
 type Terminal = {
   terminal_id: string;
@@ -54,6 +55,19 @@ export default function Dashboard() {
   const [branchList, setBranchList] = useState<BranchInfo[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
 
+  // Add new state for sync modal
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [syncDateRange, setSyncDateRange] = useState({
+    start: new Date().toISOString().split("T")[0],
+    end: new Date().toISOString().split("T")[0],
+  });
+
+  // Add new state for sync status with type definition
+  type SyncStatus = 'pending' | 'in_progress' | 'success' | 'failed';
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [activeSyncId, setActiveSyncId] = useState<number | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+
   // Sales metrics
   const [totalSales, setTotalSales] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
@@ -64,13 +78,20 @@ export default function Dashboard() {
   const [salesByBranch, setSalesByBranch] = useState<BranchSales[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
 
-  // Fetch branch list
-  useEffect(() => {
-    const fetchBranches = async () => {
-      try {
-        const salesDb = getSalesDb();
-        
-        // Fetch unique branches with names from orders table
+  // Add new state for notification
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'info';
+  } | null>(null);
+
+  // Function to fetch sales data
+  const fetchSalesData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const salesDb = getSalesDb();
+
+      // Fetch branches if list is empty
+      if (branchList.length === 0) {
         const { data: branchData, error: branchError } = await salesDb
           .from('orders')
           .select('branch_code, branch_name')
@@ -88,269 +109,324 @@ export default function Dashboard() {
         ).sort((a, b) => (a.branch_name || '').localeCompare(b.branch_name || ''));
 
         setBranchList(uniqueBranches);
-      } catch (err) {
-        console.error('Failed to fetch branches:', err);
       }
-    };
 
-    fetchBranches();
-  }, []);
+      // Fetch orders within date range
+      let query = salesDb
+        .from("orders")
+        .select("*")
+        .gte("log_date", dateRange.start)
+        .lte("log_date", dateRange.end)
+        .not("is_cancelled", "eq", true)
+        .not("is_suspended", "eq", true);
 
-  useEffect(() => {
-    const fetchSalesData = async () => {
-      try {
-        const salesDb = getSalesDb();
+      // Add branch filter if a specific branch is selected
+      if (selectedBranch !== 'all') {
+        query = query.eq('branch_code', selectedBranch);
+      }
 
-        // Fetch orders within date range
-        let query = salesDb
-          .from("orders")
-          .select("*")
-          .gte("log_date", dateRange.start)
-          .lte("log_date", dateRange.end)
-          .not("is_cancelled", "eq", true)
-          .not("is_suspended", "eq", true);
+      const { data: orders, error: ordersError } = await query;
 
-        // Add branch filter if a specific branch is selected
-        if (selectedBranch !== 'all') {
-          query = query.eq('branch_code', selectedBranch);
+      if (ordersError) {
+        console.error("Error fetching orders:", ordersError);
+        throw new Error(`Database error: ${ordersError.message}`);
+      }
+
+      if (!orders || orders.length === 0) {
+        console.log("No orders found for the selected date range");
+        setTotalSales(0);
+        setOrderCount(0);
+        setAverageOrderValue(0);
+        setTopProducts([]);
+        setSalesByBranch([]);
+        setPaymentMethods([]);
+        return;
+      }
+
+      // Fetch discounts for these orders
+      const { data: discounts, error: discountsError } = await salesDb
+        .from("orders_discounts")
+        .select("*")
+        .gte("log_date", dateRange.start)
+        .lte("log_date", dateRange.end);
+
+      if (discountsError) {
+        console.error("Error fetching discounts:", discountsError);
+        throw new Error(`Database error: ${discountsError.message}`);
+      }
+
+      // Create a map of order_id to total discounts
+      const discountsByOrder = (discounts || []).reduce((acc, discount) => {
+        // Convert order_id to string for comparison since orders_discounts.order_id is varchar
+        const orderId = discount.order_id;
+        acc.set(
+          orderId,
+          (acc.get(orderId) || 0) + (discount.subtotal_discount || 0)
+        );
+        return acc;
+      }, new Map<string, number>());
+
+      // Calculate total sales and order count with discounts
+      const total = orders.reduce((sum, order) => {
+        const netTotal = order.net_total || 0;
+        // Convert order.order_id to string for comparison
+        const orderDiscount =
+          discountsByOrder.get(order.order_id.toString()) || 0;
+        return sum + (netTotal - orderDiscount);
+      }, 0);
+
+      setTotalSales(total);
+      setOrderCount(orders.length);
+      setAverageOrderValue(orders.length ? total / orders.length : 0);
+
+      // Process sales by branch with discounts
+      const branchSales = orders.reduce((acc, order: Order) => {
+        const branchKey = order.branch_name;
+        const terminalKey = order.terminal_no || "Unknown Terminal";
+
+        // Get discount for this order
+        const orderDiscount =
+          discountsByOrder.get(order.order_id.toString()) || 0;
+        const netSalesAfterDiscount = (order.net_total || 0) - orderDiscount;
+
+        // Find or create branch entry
+        let branch = acc.find(
+          (item: IntermediateBranchSales) => item.branch_name === branchKey
+        );
+        if (!branch) {
+          branch = {
+            branch_name: branchKey,
+            total_sales: 0,
+            terminals: new Map<string, number>(),
+          };
+          acc.push(branch);
         }
 
-        const { data: orders, error: ordersError } = await query;
+        // Update branch total
+        branch.total_sales += netSalesAfterDiscount;
 
-        if (ordersError) {
-          console.error("Error fetching orders:", ordersError);
-          throw new Error(`Database error: ${ordersError.message}`);
-        }
+        // Update terminal data
+        const currentTerminalTotal = branch.terminals.get(terminalKey) || 0;
+        branch.terminals.set(
+          terminalKey,
+          currentTerminalTotal + netSalesAfterDiscount
+        );
 
-        if (!orders || orders.length === 0) {
-          console.log("No orders found for the selected date range");
-          setTotalSales(0);
-          setOrderCount(0);
-          setAverageOrderValue(0);
-          setTopProducts([]);
-          setSalesByBranch([]);
-          setPaymentMethods([]);
-          return;
-        }
+        return acc;
+      }, [] as IntermediateBranchSales[]);
 
-        // Fetch discounts for these orders
-        const { data: discounts, error: discountsError } = await salesDb
-          .from("orders_discounts")
-          .select("*")
-          .gte("log_date", dateRange.start)
-          .lte("log_date", dateRange.end);
+      // Convert Map to array for each branch and sort terminals by number
+      const processedBranchSales: BranchSales[] = branchSales.map(
+        (branch: IntermediateBranchSales) => ({
+          branch_name: branch.branch_name,
+          total_sales: branch.total_sales,
+          terminals: Array.from(branch.terminals.entries())
+            .sort((a: [string, number], b: [string, number]) =>
+              a[0].localeCompare(b[0])
+            )
+            .map(([terminal_no, amount]: [string, number]) => ({
+              terminal_id: terminal_no,
+              terminal_no,
+              amount,
+            })),
+        })
+      );
 
-        if (discountsError) {
-          console.error("Error fetching discounts:", discountsError);
-          throw new Error(`Database error: ${discountsError.message}`);
-        }
+      setSalesByBranch(processedBranchSales);
 
-        // Create a map of order_id to total discounts
-        const discountsByOrder = (discounts || []).reduce((acc, discount) => {
-          // Convert order_id to string for comparison since orders_discounts.order_id is varchar
-          const orderId = discount.order_id;
-          acc.set(
-            orderId,
-            (acc.get(orderId) || 0) + (discount.subtotal_discount || 0)
-          );
-          return acc;
-        }, new Map<string, number>());
+      // Fetch payment methods with discounts applied
+      let paymentQuery = salesDb
+        .from("order_payments")
+        .select(
+          "tender_type, tender_amount, change_amount, refund_amount, terminal_no, branch_code"
+        )
+        .gte("log_date", dateRange.start)
+        .lte("log_date", dateRange.end);
 
-        // Calculate total sales and order count with discounts
-        const total = orders.reduce((sum, order) => {
-          const netTotal = order.net_total || 0;
-          // Convert order.order_id to string for comparison
-          const orderDiscount =
-            discountsByOrder.get(order.order_id.toString()) || 0;
-          return sum + (netTotal - orderDiscount);
-        }, 0);
+      // Add branch filter if a specific branch is selected
+      if (selectedBranch !== 'all') {
+        paymentQuery = paymentQuery.eq('branch_code', selectedBranch);
+      }
 
-        setTotalSales(total);
-        setOrderCount(orders.length);
-        setAverageOrderValue(orders.length ? total / orders.length : 0);
+      const { data: payments } = await paymentQuery;
 
-        // Process sales by branch with discounts
-        const branchSales = orders.reduce((acc, order: Order) => {
-          const branchKey = order.branch_name;
-          const terminalKey = order.terminal_no || "Unknown Terminal";
+      if (payments) {
+        // First, aggregate by payment method and terminal
+        const paymentsByMethodAndTerminal = payments.reduce((acc, curr) => {
+          const netAmount =
+            (curr.tender_amount || 0) -
+            (curr.change_amount || 0) -
+            (curr.refund_amount || 0);
+          const terminalNo = curr.terminal_no || "Unknown Terminal";
+          const key = curr.tender_type;
 
-          // Get discount for this order
-          const orderDiscount =
-            discountsByOrder.get(order.order_id.toString()) || 0;
-          const netSalesAfterDiscount = (order.net_total || 0) - orderDiscount;
-
-          // Find or create branch entry
-          let branch = acc.find(
-            (item: IntermediateBranchSales) => item.branch_name === branchKey
-          );
-          if (!branch) {
-            branch = {
-              branch_name: branchKey,
-              total_sales: 0,
+          if (!acc.has(key)) {
+            acc.set(key, {
+              tender_type: key,
+              total_amount: 0,
               terminals: new Map<string, number>(),
-            };
-            acc.push(branch);
+            });
           }
 
-          // Update branch total
-          branch.total_sales += netSalesAfterDiscount;
+          const methodData = acc.get(key)!;
+          methodData.total_amount += netAmount;
 
-          // Update terminal data
-          const currentTerminalTotal = branch.terminals.get(terminalKey) || 0;
-          branch.terminals.set(
-            terminalKey,
-            currentTerminalTotal + netSalesAfterDiscount
-          );
+          // Update terminal amount
+          const currentTerminalAmount = methodData.terminals.get(terminalNo) || 0;
+          methodData.terminals.set(terminalNo, currentTerminalAmount + netAmount);
 
           return acc;
-        }, [] as IntermediateBranchSales[]);
+        }, new Map<string, { tender_type: string; total_amount: number; terminals: Map<string, number> }>());
 
-        // Convert Map to array for each branch and sort terminals by number
-        const processedBranchSales: BranchSales[] = branchSales.map(
-          (branch: IntermediateBranchSales) => ({
-            branch_name: branch.branch_name,
-            total_sales: branch.total_sales,
-            terminals: Array.from(branch.terminals.entries())
-              .sort((a: [string, number], b: [string, number]) =>
-                a[0].localeCompare(b[0])
-              )
-              .map(([terminal_no, amount]: [string, number]) => ({
-                terminal_id: terminal_no,
+        // Convert to array and format terminal data
+        const processedPaymentMethods = Array.from(paymentsByMethodAndTerminal.values())
+          .map((method) => ({
+            tender_type: method.tender_type,
+            total_amount: method.total_amount,
+            terminals: Array.from(method.terminals.entries())
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([terminal_no, amount]) => ({
                 terminal_no,
                 amount,
               })),
-          })
-        );
+          }))
+          .sort((a, b) => b.total_amount - a.total_amount); // Sort by total amount descending
 
-        setSalesByBranch(processedBranchSales);
-
-        // Fetch payment methods with discounts applied
-        let paymentQuery = salesDb
-          .from("order_payments")
-          .select(
-            "tender_type, tender_amount, change_amount, refund_amount, terminal_no, branch_code"
-          )
-          .gte("log_date", dateRange.start)
-          .lte("log_date", dateRange.end);
-
-        // Add branch filter if a specific branch is selected
-        if (selectedBranch !== 'all') {
-          paymentQuery = paymentQuery.eq('branch_code', selectedBranch);
-        }
-
-        const { data: payments } = await paymentQuery;
-
-        if (payments) {
-          // First, aggregate by payment method and terminal
-          const paymentsByMethodAndTerminal = payments.reduce((acc, curr) => {
-            const netAmount =
-              (curr.tender_amount || 0) -
-              (curr.change_amount || 0) -
-              (curr.refund_amount || 0);
-            const terminalNo = curr.terminal_no || "Unknown Terminal";
-            const key = curr.tender_type;
-
-            if (!acc.has(key)) {
-              acc.set(key, {
-                tender_type: key,
-                total_amount: 0,
-                terminals: new Map<string, number>(),
-              });
-            }
-
-            const methodData = acc.get(key)!;
-            methodData.total_amount += netAmount;
-
-            // Update terminal amount
-            const currentTerminalAmount = methodData.terminals.get(terminalNo) || 0;
-            methodData.terminals.set(terminalNo, currentTerminalAmount + netAmount);
-
-            return acc;
-          }, new Map<string, { tender_type: string; total_amount: number; terminals: Map<string, number> }>());
-
-          // Convert to array and format terminal data
-          const processedPaymentMethods = Array.from(paymentsByMethodAndTerminal.values())
-            .map((method) => ({
-              tender_type: method.tender_type,
-              total_amount: method.total_amount,
-              terminals: Array.from(method.terminals.entries())
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([terminal_no, amount]) => ({
-                  terminal_no,
-                  amount,
-                })),
-            }))
-            .sort((a, b) => b.total_amount - a.total_amount); // Sort by total amount descending
-
-          setPaymentMethods(processedPaymentMethods);
-        }
-
-        // Fetch top products
-        let topProductsQuery = salesDb
-          .from("order_details")
-          .select(`
-            menu_name,
-            menu_id,
-            item_qty,
-            qty_refund,
-            total_amount,
-            branch_code
-          `)
-          .gte("log_date", dateRange.start)
-          .lte("log_date", dateRange.end)
-          .eq("voided", false);
-
-        // Add branch filter if a specific branch is selected
-        if (selectedBranch !== 'all') {
-          topProductsQuery = topProductsQuery.eq('branch_code', selectedBranch);
-        }
-
-        const { data: topProductsData } = await topProductsQuery.order("item_qty", { ascending: false });
-
-        if (topProductsData) {
-          const aggregatedProducts = topProductsData.reduce((acc, curr) => {
-            const existing = acc.find(
-              (item) => item.menu_name === curr.menu_name
-            );
-            if (existing) {
-              // Calculate actual quantity by subtracting refunds
-              const actualQty = curr.item_qty - (curr.qty_refund || 0);
-              existing.total_quantity += actualQty;
-              existing.total_amount += curr.total_amount;
-            } else {
-              // Initialize with actual quantity
-              const actualQty = curr.item_qty - (curr.qty_refund || 0);
-              acc.push({
-                menu_name: curr.menu_name,
-                total_quantity: actualQty,
-                total_amount: curr.total_amount,
-              });
-            }
-            return acc;
-          }, [] as { menu_name: string; total_quantity: number; total_amount: number }[]);
-
-          // Sort top products based on selected criteria and limit to top 10
-          const sortedTopProducts = [...aggregatedProducts]
-            .sort((a, b) => 
-              topProductsSort === 'quantity' 
-                ? b.total_quantity - a.total_quantity
-                : b.total_amount - a.total_amount
-            )
-            .slice(0, 10); // Limit to top 10
-          setTopProducts(sortedTopProducts);
-        }
-      } catch (err) {
-        console.error("Error in fetchSalesData:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to fetch sales data"
-        );
-      } finally {
-        setLoading(false);
+        setPaymentMethods(processedPaymentMethods);
       }
-    };
 
+      // Fetch top products
+      let topProductsQuery = salesDb
+        .from("order_details")
+        .select(`
+          menu_name,
+          menu_id,
+          item_qty,
+          qty_refund,
+          total_amount,
+          branch_code
+        `)
+        .gte("log_date", dateRange.start)
+        .lte("log_date", dateRange.end)
+        .eq("voided", false);
+
+      // Add branch filter if a specific branch is selected
+      if (selectedBranch !== 'all') {
+        topProductsQuery = topProductsQuery.eq('branch_code', selectedBranch);
+      }
+
+      const { data: topProductsData } = await topProductsQuery.order("item_qty", { ascending: false });
+
+      if (topProductsData) {
+        const aggregatedProducts = topProductsData.reduce((acc, curr) => {
+          const existing = acc.find(
+            (item) => item.menu_name === curr.menu_name
+          );
+          if (existing) {
+            // Calculate actual quantity by subtracting refunds
+            const actualQty = curr.item_qty - (curr.qty_refund || 0);
+            existing.total_quantity += actualQty;
+            existing.total_amount += curr.total_amount;
+          } else {
+            // Initialize with actual quantity
+            const actualQty = curr.item_qty - (curr.qty_refund || 0);
+            acc.push({
+              menu_name: curr.menu_name,
+              total_quantity: actualQty,
+              total_amount: curr.total_amount,
+            });
+          }
+          return acc;
+        }, [] as { menu_name: string; total_quantity: number; total_amount: number }[]);
+
+        // Sort top products based on selected criteria and limit to top 10
+        const sortedTopProducts = [...aggregatedProducts]
+          .sort((a, b) => 
+            topProductsSort === 'quantity' 
+              ? b.total_quantity - a.total_quantity
+              : b.total_amount - a.total_amount
+          )
+          .slice(0, 10); // Limit to top 10
+        setTopProducts(sortedTopProducts);
+      }
+    } catch (err) {
+      console.error("Error fetching sales data:", err);
+      setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setLoading(false);
+    }
+  }, [dateRange, topProductsSort, selectedBranch, branchList]);
+
+  // Function to check sync status
+  const checkSyncStatus = useCallback(async () => {
+    if (!activeSyncId) return;
+
+    try {
+      const salesDb = getSalesDb();
+      const { data, error } = await salesDb
+        .from('sync_data')
+        .select('status, records_synced, branch_code')
+        .eq('id', activeSyncId)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setSyncStatus(data.status as SyncStatus);
+        
+        // Handle different sync states
+        switch (data.status) {
+          case 'success':
+            setActiveSyncId(null);
+            setSyncStatus(null);
+            setIsSyncing(false);
+            // Refresh dashboard data
+            await fetchSalesData();
+            // Show success message with records synced
+            setNotification({
+              message: `Sync completed successfully for branch ${data.branch_code}${data.records_synced ? ` (${data.records_synced} records synced)` : ''}!`,
+              type: 'success'
+            });
+            break;
+          
+          case 'failed':
+            setActiveSyncId(null);
+            setSyncStatus(null);
+            setIsSyncing(false);
+            setNotification({
+              message: `Sync failed for branch ${data.branch_code}. Please try again.`,
+              type: 'error'
+            });
+            break;
+          
+          case 'in_progress':
+            // Update status text but keep polling
+            break;
+          
+          case 'pending':
+            // Keep polling until the other system picks it up
+            break;
+        }
+      }
+    } catch (err) {
+      console.error('Error checking sync status:', err);
+      // Don't clear the sync state on network errors, keep polling
+    }
+  }, [activeSyncId, fetchSalesData]);
+
+  // Set up polling when there's an active sync
+  useEffect(() => {
+    if (!activeSyncId) return;
+
+    const pollInterval = setInterval(checkSyncStatus, 5000); // Poll every 5 seconds to reduce server load
+
+    return () => clearInterval(pollInterval);
+  }, [activeSyncId, checkSyncStatus]);
+
+  // Initial data fetch
+  useEffect(() => {
     fetchSalesData();
-  }, [dateRange, topProductsSort, selectedBranch]);
+  }, [fetchSalesData]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -366,8 +442,119 @@ export default function Dashboard() {
     }).format(quantity);
   };
 
+  // Update the sync button click handler
+  const handleSync = async () => {
+    try {
+      setIsSyncing(true);
+
+      // Check if Supabase credentials exist
+      const projectUrl = localStorage.getItem("projectUrl");
+      const projectKey = localStorage.getItem("projectKey");
+      
+      if (!projectUrl || !projectKey) {
+        throw new Error("Database connection not configured. Please check your Supabase credentials.");
+      }
+
+      const salesDb = getSalesDb();
+      
+      // Validate branch selection
+      if (selectedBranch === 'all') {
+        setNotification({
+          message: 'Please select a specific branch to sync',
+          type: 'error'
+        });
+        setIsSyncing(false);
+        return;
+      }
+
+      // Test connection before proceeding
+      const { error: testError } = await salesDb
+        .from('sync_data')
+        .select('id')
+        .limit(1);
+
+      if (testError) {
+        throw new Error(`Database connection failed: ${testError.message}`);
+      }
+
+      // Check if there's already a pending sync for this branch
+      const { data: existingSync, error: checkError } = await salesDb
+        .from('sync_data')
+        .select('id, status')
+        .eq('branch_code', selectedBranch)
+        .in('status', ['pending', 'in_progress'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (checkError) throw checkError;
+
+      if (existingSync && existingSync.length > 0) {
+        throw new Error(`There is already a sync in progress for branch ${selectedBranch}. Please wait for it to complete.`);
+      }
+
+      // Convert dates to UTC for consistency
+      const startDate = new Date(syncDateRange.start);
+      startDate.setHours(0, 0, 0, 0);
+      const startDateUTC = startDate.toISOString();
+
+      const endDate = new Date(syncDateRange.end);
+      endDate.setHours(23, 59, 59, 999);
+      const endDateUTC = endDate.toISOString();
+
+      const now = new Date();
+      const nowUTC = now.toISOString();
+
+      // Create sync request in sync_data table
+      const { data, error } = await salesDb
+        .from('sync_data')
+        .insert([{
+          last_sync_time: nowUTC,
+          branch_code: selectedBranch,
+          logdate_from: startDateUTC,
+          logdate_to: endDateUTC,
+          status: 'pending'
+        }])
+        .select();
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(`Failed to create sync record: ${error.message}`);
+      }
+
+      if (!data || data.length === 0) {
+        throw new Error('No sync record was created');
+      }
+
+      // Set the active sync ID to start polling
+      setActiveSyncId(data[0].id);
+      setSyncStatus('pending');
+      setIsSyncModalOpen(false);
+      
+    } catch (err) {
+      console.error('Error initiating sync:', err);
+      let errorMessage = 'Failed to initiate sync process. ';
+      if (err instanceof Error) {
+        errorMessage += err.message;
+      } else if (typeof err === 'object' && err !== null) {
+        errorMessage += JSON.stringify(err);
+      }
+      setNotification({
+        message: errorMessage,
+        type: 'error'
+      });
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-200 via-sky-100 to-sky-300">
+      {notification && (
+        <Notification
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
       {/* Navigation Bar without burger menu */}
       <nav className="bg-white/90 shadow-md border-b border-sky-200 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -440,19 +627,9 @@ export default function Dashboard() {
                         </option>
                       ))}
                     </select>
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                      <svg 
-                        className="h-4 w-4 text-sky-500" 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M19 9l-7 7-7-7" 
-                        />
+                    <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                      <svg className="h-4 w-4 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </div>
                   </div>
@@ -462,11 +639,128 @@ export default function Dashboard() {
                     </p>
                   )}
                 </div>
+                {/* Sync Data Button */}
+                <div className="flex items-center">
+                  <button
+                    onClick={() => setIsSyncModalOpen(true)}
+                    className="ml-2 px-4 py-1.5 bg-[#0091EA] text-white rounded-md hover:bg-[#0082d1] focus:ring-2 focus:ring-[#0091EA]/50 focus:outline-none transition-colors duration-200 flex items-center space-x-1.5 text-sm font-medium shadow-sm h-[34px]"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Sync Data</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </nav>
+
+      {/* Sync Modal */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#f5f5f5] rounded-lg shadow-lg w-full max-w-[400px]">
+            <div className="flex justify-between items-center p-4 border-b border-gray-200">
+              <h2 className="text-[16px] font-semibold text-gray-800">Sync Data</h2>
+              <button
+                onClick={() => setIsSyncModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                disabled={isSyncing}
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Branch Selection */}
+              <div>
+                <label className="block text-[13px] font-medium text-gray-600 mb-1">Select Branch</label>
+                <div className="relative">
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="w-full h-9 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-800 focus:ring-1 focus:ring-[#0091EA] focus:border-[#0091EA] shadow-sm appearance-none pr-8"
+                    disabled={isSyncing}
+                  >
+                    <option value="all">All Branches</option>
+                    {branchList.map((branch) => (
+                      <option key={branch.branch_code} value={branch.branch_code}>
+                        {branch.branch_name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[13px] font-medium text-gray-600 mb-1">From Date</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={syncDateRange.start}
+                    onChange={(e) => setSyncDateRange(prev => ({ ...prev, start: e.target.value }))}
+                    className="w-full h-9 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-800 focus:ring-1 focus:ring-[#0091EA] focus:border-[#0091EA] shadow-sm"
+                    disabled={isSyncing}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[13px] font-medium text-gray-600 mb-1">To Date</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={syncDateRange.end}
+                    onChange={(e) => setSyncDateRange(prev => ({ ...prev, end: e.target.value }))}
+                    className="w-full h-9 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-800 focus:ring-1 focus:ring-[#0091EA] focus:border-[#0091EA] shadow-sm"
+                    disabled={isSyncing}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  onClick={() => setIsSyncModalOpen(false)}
+                  className="px-4 h-9 text-[#0091EA] hover:bg-[#0091EA]/5 transition-colors duration-200 text-sm font-medium rounded"
+                  disabled={isSyncing}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSync}
+                  className="px-4 h-9 bg-[#0091EA] text-white hover:bg-[#0082d1] focus:ring-1 focus:ring-[#0091EA]/50 focus:outline-none transition-colors duration-200 flex items-center space-x-1.5 text-sm font-medium rounded disabled:bg-[#0091EA]/50 disabled:cursor-not-allowed"
+                  disabled={isSyncing || selectedBranch === 'all'}
+                >
+                  {isSyncing ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span>Syncing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      <span>Start Sync</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto py-4 sm:py-8 px-4 sm:px-6 lg:px-8">
         {loading ? (
@@ -701,6 +995,50 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* Update sync status indicator */}
+      {activeSyncId && (
+        <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 z-50 border border-sky-200">
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
+              {syncStatus === 'pending' && (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-sky-500" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Waiting for sync to begin...</span>
+                </>
+              )}
+              {syncStatus === 'in_progress' && (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-sky-500" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Syncing data...</span>
+                </>
+              )}
+              {syncStatus === 'success' && (
+                <>
+                  <svg className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Sync complete!</span>
+                </>
+              )}
+              {syncStatus === 'failed' && (
+                <>
+                  <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Sync failed</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
