@@ -67,18 +67,4 @@ export function Notification({ message, type, onClose, duration = 5000 }: Notifi
       </div>
     </div>
   );
-}
-
-// Add fade-in animation to tailwind.config
-const fadeInAnimation = {
-  'fade-in': {
-    '0%': {
-      opacity: '0',
-      transform: 'translateY(10px)'
-    },
-    '100%': {
-      opacity: '1',
-      transform: 'translateY(0)'
-    },
-  }
-}; 
+} 

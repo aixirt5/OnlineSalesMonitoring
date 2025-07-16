@@ -558,14 +558,18 @@ export default function Dashboard() {
       {/* Navigation Bar without burger menu */}
       <nav className="bg-white/90 shadow-md border-b border-sky-200 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row sm:justify-between py-4 sm:py-0">
-            <div className="flex items-center justify-center sm:justify-start h-16">
+          <div className="flex flex-col py-4">
+            {/* Title Section */}
+            <div className="flex items-center justify-center sm:justify-start h-12 mb-4">
               <h1 className="text-xl sm:text-2xl font-extrabold text-sky-800 tracking-tight drop-shadow-sm">
                 Sales Monitoring System
               </h1>
             </div>
-            <div className="flex items-center justify-center sm:justify-end pb-4 sm:pb-0">
-              <div className="flex flex-row space-x-3">
+            
+            {/* Controls Section - Reorganized for better mobile layout */}
+            <div className="flex flex-col space-y-4">
+              {/* Date Range Controls */}
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col">
                   <label className="text-xs text-sky-600 mb-1 font-semibold">
                     From
@@ -595,6 +599,11 @@ export default function Dashboard() {
                     className="w-full border border-sky-300 bg-white/70 rounded-lg px-2 sm:px-3 py-1.5 text-sm focus:ring-sky-400 focus:border-sky-400 shadow-sm transition-all duration-200 text-sky-900"
                   />
                 </div>
+              </div>
+
+              {/* Branch and Sync Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Branch Selection */}
                 <div className="flex flex-col">
                   <label className="text-xs text-sky-600 mb-1 font-semibold">
                     Branch
@@ -618,7 +627,7 @@ export default function Dashboard() {
                     <select
                       value={selectedBranch}
                       onChange={(e) => setSelectedBranch(e.target.value)}
-                      className="w-full border border-sky-300 bg-white/70 rounded-lg pl-9 pr-8 py-1.5 text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 shadow-sm transition-all duration-200 text-sky-900 appearance-none hover:bg-sky-50/50"
+                      className="w-full h-[38px] border border-sky-300 bg-white/70 rounded-lg pl-9 pr-8 text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 shadow-sm transition-all duration-200 text-sky-900 appearance-none hover:bg-sky-50/50"
                     >
                       <option value="all">All Branches</option>
                       {branchList.map((branch) => (
@@ -633,17 +642,13 @@ export default function Dashboard() {
                       </svg>
                     </div>
                   </div>
-                  {selectedBranch !== 'all' && (
-                    <p className="mt-1 text-xs text-sky-600">
-                      Showing data for selected branch only
-                    </p>
-                  )}
                 </div>
-                {/* Sync Data Button */}
-                <div className="flex items-center">
+
+                {/* Sync Button */}
+                <div className="flex items-end">
                   <button
                     onClick={() => setIsSyncModalOpen(true)}
-                    className="ml-2 px-4 py-1.5 bg-[#0091EA] text-white rounded-md hover:bg-[#0082d1] focus:ring-2 focus:ring-[#0091EA]/50 focus:outline-none transition-colors duration-200 flex items-center space-x-1.5 text-sm font-medium shadow-sm h-[34px]"
+                    className="w-full h-[38px] bg-[#0091EA] text-white rounded-lg hover:bg-[#0082d1] focus:ring-2 focus:ring-[#0091EA]/50 focus:outline-none transition-colors duration-200 flex items-center justify-center space-x-2 text-sm font-medium shadow-sm"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
