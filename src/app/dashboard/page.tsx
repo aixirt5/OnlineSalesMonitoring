@@ -77,6 +77,10 @@ export default function Dashboard() {
   >([]);
   const [salesByBranch, setSalesByBranch] = useState<BranchSales[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  // Inline collapse state and cache for per-branch payment methods
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+  const [branchPaymentsCache, setBranchPaymentsCache] = useState<Record<string, PaymentMethod[]>>({});
+  const [branchPaymentsLoading, setBranchPaymentsLoading] = useState<Record<string, boolean>>({});
 
   // Add new state for notification
   const [notification, setNotification] = useState<{
@@ -546,6 +550,83 @@ export default function Dashboard() {
     }
   };
 
+  // Helper to aggregate payments into PaymentMethod[]
+  const aggregatePayments = (
+    payments: Array<{
+      tender_type: string;
+      tender_amount: number;
+      change_amount: number;
+      refund_amount: number;
+      terminal_no: string | null;
+    }>
+  ): PaymentMethod[] => {
+    const byMethodAndTerminal = payments.reduce((acc, curr) => {
+      const netAmount = (curr.tender_amount || 0) - (curr.change_amount || 0) - (curr.refund_amount || 0);
+      const terminalNo = curr.terminal_no || "Unknown Terminal";
+      const key = curr.tender_type;
+      if (!acc.has(key)) {
+        acc.set(key, { tender_type: key, total_amount: 0, terminals: new Map<string, number>() });
+      }
+      const methodData = acc.get(key)!;
+      methodData.total_amount += netAmount;
+      const currentTerminalAmount = methodData.terminals.get(terminalNo) || 0;
+      methodData.terminals.set(terminalNo, currentTerminalAmount + netAmount);
+      return acc;
+    }, new Map<string, { tender_type: string; total_amount: number; terminals: Map<string, number> }>());
+
+    return Array.from(byMethodAndTerminal.values())
+      .map((method) => ({
+        tender_type: method.tender_type,
+        total_amount: method.total_amount,
+        terminals: Array.from(method.terminals.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([terminal_no, amount]) => ({ terminal_no, amount })),
+      }))
+      .sort((a, b) => b.total_amount - a.total_amount);
+  };
+
+  // Toggle branch collapse and fetch payments on first open, cache thereafter
+  const toggleBranchPayments = async (branchName: string) => {
+    if (expandedBranch === branchName) {
+      setExpandedBranch(null);
+      return;
+    }
+
+    setExpandedBranch(branchName);
+
+    if (branchPaymentsCache[branchName]) return; // already cached
+
+    try {
+      setBranchPaymentsLoading((prev) => ({ ...prev, [branchName]: true }));
+
+      // Map branch name to branch code
+      const branch = branchList.find((b) => (b.branch_name || "") === branchName);
+      if (!branch) {
+        throw new Error(`Branch code not found for ${branchName}`);
+      }
+
+      const salesDb = getSalesDb();
+      const { data: payments, error } = await salesDb
+        .from("order_payments")
+        .select("tender_type, tender_amount, change_amount, refund_amount, terminal_no, branch_code")
+        .gte("log_date", dateRange.start)
+        .lte("log_date", dateRange.end)
+        .eq("branch_code", branch.branch_code);
+
+      if (error) throw error;
+      const aggregated = aggregatePayments((payments as any) || []);
+      setBranchPaymentsCache((prev) => ({ ...prev, [branchName]: aggregated }));
+    } catch (err) {
+      console.error("Error loading branch payments:", err);
+      setNotification({
+        message: err instanceof Error ? err.message : "Failed to load branch payments",
+        type: "error",
+      });
+    } finally {
+      setBranchPaymentsLoading((prev) => ({ ...prev, [branchName]: false }));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-200 via-sky-100 to-sky-300">
       {notification && (
@@ -997,6 +1078,100 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+
+            {/* Branch Sales (Summary) - Only Branch Name and Total Sales */}
+            <div className="bg-white/90 rounded-2xl shadow-lg overflow-hidden border border-sky-100">
+              <div className="px-4 sm:px-8 py-4 sm:py-6 border-b border-sky-100 bg-gradient-to-r from-sky-50 to-cyan-50">
+                <h3 className="text-lg font-bold text-sky-800">
+                  Branch Sales (Summary)
+                </h3>
+                <p className="mt-1 text-sm text-sky-700">Branch name and total sales only</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-sky-100">
+                  <thead className="bg-sky-50">
+                    <tr>
+                      <th className="px-4 sm:px-8 py-3 text-left text-xs font-bold text-sky-700 uppercase tracking-widest">
+                        Branch
+                      </th>
+                      <th className="px-4 sm:px-8 py-3 text-right text-xs font-bold text-sky-700 uppercase tracking-widest">
+                        Total Sales
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-sky-50">
+                    {salesByBranch.map((branch, index) => (
+                      <React.Fragment key={`branch-summary-${index}`}>
+                        <tr
+                          className="hover:bg-sky-50 transition-colors duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                          onClick={() => toggleBranchPayments(branch.branch_name)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleBranchPayments(branch.branch_name);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={expandedBranch === branch.branch_name}
+                        >
+                          <td className="px-4 sm:px-8 py-3 sm:py-4 whitespace-normal sm:whitespace-nowrap text-sm text-sky-800 font-medium">
+                            <span className="text-sky-800">
+                              {branch.branch_name}
+                            </span>
+                          </td>
+                          <td className="px-4 sm:px-8 py-3 sm:py-4 whitespace-nowrap text-sm text-sky-800 text-right font-semibold">
+                            {formatCurrency(branch.total_sales)}
+                          </td>
+                        </tr>
+                        {expandedBranch === branch.branch_name && (
+                          <tr>
+                            <td colSpan={2} className="px-4 sm:px-8 py-2 bg-sky-50">
+                              {branchPaymentsLoading[branch.branch_name] ? (
+                                <div className="flex items-center justify-center py-6">
+                                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-500"></div>
+                                </div>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  {(!branchPaymentsCache[branch.branch_name] || branchPaymentsCache[branch.branch_name].length === 0) ? (
+                                    <div className="text-center text-sm text-gray-600 py-4">No payment data for selected period.</div>
+                                  ) : (
+                                    <table className="min-w-full">
+                                      <thead>
+                                        <tr>
+                                          <th className="py-2 text-left text-xs font-bold text-sky-700 uppercase tracking-widest">Method</th>
+                                          <th className="py-2 text-right text-xs font-bold text-sky-700 uppercase tracking-widest">Amount</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {branchPaymentsCache[branch.branch_name].map((method, mIdx) => (
+                                          <React.Fragment key={`branch-collapse-${index}-${mIdx}`}>
+                                            <tr className="hover:bg-sky-100/50">
+                                              <td className="py-2 text-sm text-sky-800 font-medium">{method.tender_type}</td>
+                                              <td className="py-2 text-sm text-sky-800 text-right font-semibold">{formatCurrency(method.total_amount)}</td>
+                                            </tr>
+                                            {method.terminals.length > 1 && method.terminals.map((terminal, tIdx) => (
+                                              <tr key={`branch-collapse-term-${index}-${mIdx}-${tIdx}`} className="hover:bg-sky-100/30">
+                                                <td className="py-1 pl-6 text-sm text-sky-600">└ Terminal {terminal.terminal_no}</td>
+                                                <td className="py-1 text-sm text-sky-600 text-right">{formatCurrency(terminal.amount)}</td>
+                                              </tr>
+                                            ))}
+                                          </React.Fragment>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </main>
@@ -1044,6 +1219,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Removed modal in favor of inline collapsible rows */}
     </div>
   );
 }
