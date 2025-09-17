@@ -614,7 +614,20 @@ export default function Dashboard() {
         .eq("branch_code", branch.branch_code);
 
       if (error) throw error;
-      const aggregated = aggregatePayments((payments as any) || []);
+      const typedPayments: Array<{
+        tender_type: string;
+        tender_amount: number;
+        change_amount: number;
+        refund_amount: number;
+        terminal_no: string | null;
+      }> = (payments ?? []) as Array<{
+        tender_type: string;
+        tender_amount: number;
+        change_amount: number;
+        refund_amount: number;
+        terminal_no: string | null;
+      }>;
+      const aggregated = aggregatePayments(typedPayments);
       setBranchPaymentsCache((prev) => ({ ...prev, [branchName]: aggregated }));
     } catch (err) {
       console.error("Error loading branch payments:", err);
